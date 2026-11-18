@@ -1,5 +1,7 @@
 # maekom-env
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 > **Zero-Disk `.env` Secret Manager** — AES-256-GCM encrypted central vault in pure Go + SQLite (WAL), embedded React dashboard with Google OTP (2FA), and `mkv` CLI for in-memory secret injection.
 
 <p align="center">
@@ -241,6 +243,9 @@ mkv pull -e dev -o .env
 > [!CAUTION]
 > `mkv pull`로 생성된 `.env` 파일은 평문 시크릿을 포함하므로, 실수로 Git에 커밋되지 않도록 반드시 `.gitignore`에 `.env`를 등록하고 사용 후 삭제하는 것을 권장합니다.
 
+#### 라이선스
+이 프로젝트는 [Apache License 2.0](LICENSE)에 따라 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 및 [NOTICE](NOTICE) 파일을 참고하세요.
+
 ---
 
 <a id="english-guide"></a>
@@ -468,3 +473,6 @@ mkv pull -e dev -o .env
 
 > [!CAUTION]
 > `.env` files created by `mkv pull` contain plaintext secrets. Ensure `.env` is listed in `.gitignore` and remove the file when no longer needed.
+
+#### License
+This project is licensed under the [Apache License 2.0](LICENSE) — see the [LICENSE](LICENSE) and [NOTICE](NOTICE) files for details.

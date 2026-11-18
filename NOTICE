@@ -1,0 +1,11 @@
+maekom-env
+Copyright 2026 maekom-hub
+
+This product includes software developed at maekom-hub
+(https://github.com/maekom-hub/maekom-env).
+
+This software also incorporates open-source components including, without
+limitation:
+- Go standard library & golang.org/x/* packages (BSD-3-Clause)
+- modernc.org/sqlite pure-Go SQLite driver (BSD-3-Clause)
+- React, Vite, Tailwind CSS, Lucide Icons, and qrcode (MIT)
