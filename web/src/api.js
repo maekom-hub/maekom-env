@@ -40,7 +40,30 @@ export const api = {
       ignoreUnauthorized: true,
       body: JSON.stringify({ password, totp_code: totpCode || '' }),
     }),
+  totpSetup: (tempToken, totpCode) =>
+    request('/api/auth/totp/setup', {
+      method: 'POST',
+      ignoreUnauthorized: true,
+      body: JSON.stringify({ temp_token: tempToken, totp_code: totpCode }),
+    }),
+  totpVerify: (tempToken, totpCode) =>
+    request('/api/auth/totp/verify', {
+      method: 'POST',
+      ignoreUnauthorized: true,
+      body: JSON.stringify({ temp_token: tempToken, totp_code: totpCode }),
+    }),
   logout: () => request('/api/auth/logout', { method: 'POST', ignoreUnauthorized: true }),
+
+  settingsTOTPBegin: (password, currentTotpCode) =>
+    request('/api/settings/totp/begin', {
+      method: 'POST',
+      body: JSON.stringify({ password: password || '', current_totp_code: currentTotpCode || '' }),
+    }),
+  settingsTOTPConfirm: (totpCode) =>
+    request('/api/settings/totp/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ totp_code: totpCode }),
+    }),
 
   listProjects: () => request('/api/projects'),
   createProject: (name, description) =>
@@ -68,6 +91,11 @@ export const api = {
   upsertSecret: (projectID, envID, payload) =>
     request(`/api/projects/${projectID}/environments/${envID}/secrets`, {
       method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateSecret: (projectID, envID, key, payload) =>
+    request(`/api/projects/${projectID}/environments/${envID}/secrets/${encodeURIComponent(key)}`, {
+      method: 'PUT',
       body: JSON.stringify(payload),
     }),
   deleteSecret: (projectID, envID, key) =>

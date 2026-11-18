@@ -142,6 +142,30 @@ func (s *Server) handleRevealSecret(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func parseOptionalExpiresAt(raw *string) (*time.Time, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	s := strings.TrimSpace(*raw)
+	if s == "" {
+		return nil, nil
+	}
+	if len(s) == 10 {
+		t, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			return nil, fmt.Errorf("invalid expires_at date %q: expected YYYY-MM-DD", s)
+		}
+		endOfDay := time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, time.UTC)
+		return &endOfDay, nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return nil, fmt.Errorf("invalid expires_at timestamp %q: expected YYYY-MM-DD or RFC3339", s)
+	}
+	utc := t.UTC()
+	return &utc, nil
+}
+
 func (s *Server) handleUpsertSecret(w http.ResponseWriter, r *http.Request) {
 	proj, env, ok := s.authorizeEnvAccess(w, r, true)
 	if !ok {
@@ -149,16 +173,22 @@ func (s *Server) handleUpsertSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Key       string     `json:"key"`
-		Value     string     `json:"value"`
-		ExpiresAt *time.Time `json:"expires_at"`
+		Key       string  `json:"key"`
+		Value     string  `json:"value"`
+		ExpiresAt *string `json:"expires_at"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	s.upsertAndRespond(w, r, proj, env, req.Key, req.Value, req.ExpiresAt)
+	expiresAt, err := parseOptionalExpiresAt(req.ExpiresAt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	s.upsertAndRespond(w, r, proj, env, req.Key, req.Value, expiresAt)
 }
 
 func (s *Server) handleUpsertSecretByKey(w http.ResponseWriter, r *http.Request) {
@@ -169,15 +199,21 @@ func (s *Server) handleUpsertSecretByKey(w http.ResponseWriter, r *http.Request)
 
 	key := r.PathValue("key")
 	var req struct {
-		Value     string     `json:"value"`
-		ExpiresAt *time.Time `json:"expires_at"`
+		Value     string  `json:"value"`
+		ExpiresAt *string `json:"expires_at"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	s.upsertAndRespond(w, r, proj, env, key, req.Value, req.ExpiresAt)
+	expiresAt, err := parseOptionalExpiresAt(req.ExpiresAt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	s.upsertAndRespond(w, r, proj, env, key, req.Value, expiresAt)
 }
 
 func (s *Server) upsertAndRespond(
@@ -189,8 +225,8 @@ func (s *Server) upsertAndRespond(
 	expiresAt *time.Time,
 ) {
 	key = strings.TrimSpace(key)
-	if key == "" || strings.ContainsAny(key, " \t\r\n") {
-		writeError(w, http.StatusBadRequest, "valid secret key is required")
+	if !isValidSecretKey(key) {
+		writeError(w, http.StatusBadRequest, "secret key must match ^[A-Za-z_][A-Za-z0-9_]*$")
 		return
 	}
 
@@ -305,6 +341,12 @@ func (s *Server) handleImportSecrets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	importedKeys := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !isValidSecretKey(entry.Key) {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid secret key %q: must match ^[A-Za-z_][A-Za-z0-9_]*$", entry.Key))
+			return
+		}
+	}
 	for _, entry := range entries {
 		ct, nonce, err := s.cipher.EncryptString(entry.Value)
 		if err != nil {

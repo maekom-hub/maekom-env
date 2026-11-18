@@ -76,6 +76,14 @@ type AuditLog struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// AdminTOTP stores the AES-256-GCM encrypted TOTP secret for admin 2FA.
+type AdminTOTP struct {
+	EncryptedSecret []byte    `json:"-"`
+	Nonce           []byte    `json:"-"`
+	Enabled         bool      `json:"enabled"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 // Webhook represents an outbound notification endpoint for secret lifecycle events.
 type Webhook struct {
 	ID        string      `json:"id"`

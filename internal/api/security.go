@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha1"
 	"crypto/subtle"
 	"encoding/base32"
@@ -9,6 +10,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -243,4 +246,91 @@ func parseSessionTimeout(raw string) time.Duration {
 		return time.Duration(mins) * time.Minute
 	}
 	return defaultIdleTimeout
+}
+
+var secretKeyRegex = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// isValidSecretKey enforces POSIX/.env key naming rules: ^[A-Za-z_][A-Za-z0-9_]*$.
+func isValidSecretKey(key string) bool {
+	return secretKeyRegex.MatchString(key)
+}
+
+func generateTOTPSecret() (string, error) {
+	var b [20]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:]), nil
+}
+
+func buildOTPAuthURI(issuer, account, secret string) string {
+	return fmt.Sprintf(
+		"otpauth://totp/%s:%s?secret=%s&issuer=%s&algorithm=SHA1&digits=6&period=30",
+		url.PathEscape(issuer),
+		url.PathEscape(account),
+		url.QueryEscape(secret),
+		url.QueryEscape(issuer),
+	)
+}
+
+type pendingTOTPEntry struct {
+	secret    string
+	expiresAt time.Time
+}
+
+type pendingTOTPStore struct {
+	mu      sync.Mutex
+	entries map[string]pendingTOTPEntry
+	nowFunc func() time.Time
+}
+
+func newPendingTOTPStore() *pendingTOTPStore {
+	return &pendingTOTPStore{
+		entries: make(map[string]pendingTOTPEntry),
+		nowFunc: func() time.Time { return time.Now().UTC() },
+	}
+}
+
+func (p *pendingTOTPStore) set(key, secret string, ttl time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := p.nowFunc()
+	// Prune expired entries opportunistically.
+	for k, v := range p.entries {
+		if now.After(v.expiresAt) {
+			delete(p.entries, k)
+		}
+	}
+	p.entries[key] = pendingTOTPEntry{
+		secret:    secret,
+		expiresAt: now.Add(ttl),
+	}
+}
+
+func (p *pendingTOTPStore) get(key string) (string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	entry, ok := p.entries[key]
+	if !ok {
+		return "", false
+	}
+	if p.nowFunc().After(entry.expiresAt) {
+		delete(p.entries, key)
+		return "", false
+	}
+	return entry.secret, true
+}
+
+func (p *pendingTOTPStore) consume(key string) (string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	entry, ok := p.entries[key]
+	if !ok {
+		return "", false
+	}
+	delete(p.entries, key)
+	if p.nowFunc().After(entry.expiresAt) {
+		return "", false
+	}
+	return entry.secret, true
 }

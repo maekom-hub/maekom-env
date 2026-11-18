@@ -50,6 +50,9 @@ type Server struct {
 	jwtSecret     []byte
 	limiter       *loginRateLimiter
 	sessions      *sessionStore
+	pendingSetup  *pendingTOTPStore
+	pendingVerify *pendingTOTPStore
+	pendingReset  *pendingTOTPStore
 	webFS         fs.FS
 	mux           *http.ServeMux
 }
@@ -74,6 +77,9 @@ func NewServer(database *db.DB, cipher *crypto.Cipher, disp *notifier.Dispatcher
 		jwtSecret:     jwtSecret,
 		limiter:       newLoginRateLimiter(),
 		sessions:      newSessionStore(cfg.SessionTimeout),
+		pendingSetup:  newPendingTOTPStore(),
+		pendingVerify: newPendingTOTPStore(),
+		pendingReset:  newPendingTOTPStore(),
 		webFS:         cfg.WebFS,
 		mux:           http.NewServeMux(),
 	}
@@ -95,8 +101,14 @@ func (s *Server) registerRoutes() {
 	// Auth
 	s.mux.HandleFunc("GET /api/auth/status", s.handleAuthStatus)
 	s.mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	s.mux.HandleFunc("POST /api/auth/totp/setup", s.handleTOTPSetup)
+	s.mux.HandleFunc("POST /api/auth/totp/verify", s.handleTOTPVerify)
 	s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
 	s.mux.HandleFunc("GET /api/auth/me", s.requireAuth(s.handleMe))
+
+	// Security Settings (Admin only)
+	s.mux.HandleFunc("POST /api/settings/totp/begin", s.requireAdmin(s.handleSettingsTOTPBegin))
+	s.mux.HandleFunc("POST /api/settings/totp/confirm", s.requireAdmin(s.handleSettingsTOTPConfirm))
 
 	// Projects (Admin)
 	s.mux.HandleFunc("GET /api/projects", s.requireAdmin(s.handleListProjects))
@@ -170,8 +182,10 @@ func (s *Server) spaHandler() http.Handler {
 }
 
 func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	_, configured := s.resolveActiveTOTPSecret(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"totp_required": s.totpSecret != "",
+		"totp_required":   configured,
+		"totp_configured": configured,
 	})
 }
 
@@ -221,28 +235,70 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.totpSecret != "" && !verifyTOTP(s.totpSecret, req.TOTPCode, time.Now().UTC()) {
-		blockedNow := s.limiter.recordFailure(ip)
-		detail := "invalid TOTP code"
-		if blockedNow {
-			detail = "invalid TOTP code (IP blocked for 15m)"
-		}
-		s.recordAudit(r.Context(), db.AuditLog{
-			Event:     "auth.login",
-			Actor:     "admin",
-			IPAddress: ip,
-			Success:   false,
-			Detail:    detail,
-		})
-		if blockedNow {
-			w.Header().Set("Retry-After", strconv.Itoa(int(loginBlockDuration.Seconds())))
-			writeError(w, http.StatusTooManyRequests, "too many failed login attempts; try again later")
+	activeSecret, configured := s.resolveActiveTOTPSecret(r.Context())
+	if !configured {
+		// First-time login: issue short-lived 2FA setup temp token instead of full session.
+		secret, err := generateTOTPSecret()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to generate TOTP secret")
 			return
 		}
-		writeError(w, http.StatusUnauthorized, "invalid TOTP code")
+		tempToken, jti, err := s.issuePendingJWT(roleTOTPSetup, 10*time.Minute)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to issue 2FA setup token")
+			return
+		}
+		s.pendingSetup.set(jti, secret, 10*time.Minute)
+		s.limiter.reset(ip)
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":      "totp_setup_required",
+			"temp_token":  tempToken,
+			"secret":      secret,
+			"otpauth_uri": buildOTPAuthURI("maekom-env", "admin", secret),
+		})
 		return
 	}
 
+	// If caller already supplied a valid 6-digit TOTP code inline, allow direct completion.
+	if strings.TrimSpace(req.TOTPCode) != "" {
+		if !verifyTOTP(activeSecret, req.TOTPCode, time.Now().UTC()) {
+			blockedNow := s.limiter.recordFailure(ip)
+			s.recordAudit(r.Context(), db.AuditLog{
+				Event:     "auth.login",
+				Actor:     "admin",
+				IPAddress: ip,
+				Success:   false,
+				Detail:    "invalid TOTP code",
+			})
+			if blockedNow {
+				w.Header().Set("Retry-After", strconv.Itoa(int(loginBlockDuration.Seconds())))
+				writeError(w, http.StatusTooManyRequests, "too many failed login attempts; try again later")
+				return
+			}
+			writeError(w, http.StatusUnauthorized, "invalid TOTP code")
+			return
+		}
+		s.completeAdminLogin(w, r, ip, "admin login succeeded")
+		return
+	}
+
+	// Password verified; require 2FA verification via short-lived pending token.
+	tempToken, jti, err := s.issuePendingJWT(roleTOTPVerify, 5*time.Minute)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to issue 2FA verification token")
+		return
+	}
+	s.pendingVerify.set(jti, "pending", 5*time.Minute)
+	s.limiter.reset(ip)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":     "totp_verify_required",
+		"temp_token": tempToken,
+	})
+}
+
+func (s *Server) completeAdminLogin(w http.ResponseWriter, r *http.Request, ip, auditDetail string) {
 	s.limiter.reset(ip)
 
 	token, _, idleExp, err := s.issueAdminJWT(defaultJWTTTL)
@@ -257,10 +313,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Actor:     "admin",
 		IPAddress: ip,
 		Success:   true,
-		Detail:    "admin login succeeded",
+		Detail:    auditDetail,
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
+		"status":        "authenticated",
 		"authenticated": true,
 		"token":         token,
 		"expires_at":    idleExp.Format(time.RFC3339),

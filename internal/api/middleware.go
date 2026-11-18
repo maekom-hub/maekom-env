@@ -21,6 +21,10 @@ const (
 	sessionCookieName  = "maekom_session"
 	serviceTokenPrefix = "mkv_"
 	defaultJWTTTL      = 24 * time.Hour
+
+	roleAdmin      = "admin"
+	roleTOTPSetup  = "totp_setup"
+	roleTOTPVerify = "totp_verify"
 )
 
 type authContextKey struct{}
@@ -186,32 +190,45 @@ type jwtClaims struct {
 }
 
 func (s *Server) issueAdminJWT(ttl time.Duration) (token string, sessionID string, idleExp time.Time, err error) {
+	token, sessionID, err = s.issueSignedJWT(roleAdmin, ttl)
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	idleExp = s.sessions.create(sessionID)
+	return token, sessionID, idleExp, nil
+}
+
+func (s *Server) issuePendingJWT(role string, ttl time.Duration) (string, string, error) {
+	return s.issueSignedJWT(role, ttl)
+}
+
+func (s *Server) issueSignedJWT(role string, ttl time.Duration) (string, string, error) {
 	now := time.Now().UTC()
 	exp := now.Add(ttl)
 
 	var jtiBytes [16]byte
 	if _, err := rand.Read(jtiBytes[:]); err != nil {
-		return "", "", time.Time{}, err
+		return "", "", err
 	}
-	sessionID = hex.EncodeToString(jtiBytes[:])
+	jti := hex.EncodeToString(jtiBytes[:])
 
 	headerJSON, err := json.Marshal(map[string]string{
 		"alg": "HS256",
 		"typ": "JWT",
 	})
 	if err != nil {
-		return "", "", time.Time{}, err
+		return "", "", err
 	}
 
 	claimsJSON, err := json.Marshal(jwtClaims{
-		JTI:  sessionID,
+		JTI:  jti,
 		Sub:  "admin",
-		Role: "admin",
+		Role: role,
 		Iat:  now.Unix(),
 		Exp:  exp.Unix(),
 	})
 	if err != nil {
-		return "", "", time.Time{}, err
+		return "", "", err
 	}
 
 	enc := base64.RawURLEncoding
@@ -221,11 +238,18 @@ func (s *Server) issueAdminJWT(ttl time.Duration) (token string, sessionID strin
 	_, _ = mac.Write([]byte(signingInput))
 	sig := enc.EncodeToString(mac.Sum(nil))
 
-	idleExp = s.sessions.create(sessionID)
-	return signingInput + "." + sig, sessionID, idleExp, nil
+	return signingInput + "." + sig, jti, nil
 }
 
 func (s *Server) verifyAdminJWT(token string) (jwtClaims, error) {
+	return s.verifySignedJWT(token, roleAdmin)
+}
+
+func (s *Server) verifyPendingJWT(token, expectedRole string) (jwtClaims, error) {
+	return s.verifySignedJWT(token, expectedRole)
+}
+
+func (s *Server) verifySignedJWT(token, expectedRole string) (jwtClaims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return jwtClaims{}, errors.New("malformed jwt")
@@ -265,7 +289,7 @@ func (s *Server) verifyAdminJWT(token string) (jwtClaims, error) {
 	if err := json.Unmarshal(claimsBytes, &claims); err != nil {
 		return jwtClaims{}, errors.New("malformed jwt claims")
 	}
-	if claims.Role != "admin" || claims.JTI == "" || time.Now().UTC().Unix() >= claims.Exp {
+	if claims.Role != expectedRole || claims.JTI == "" || time.Now().UTC().Unix() >= claims.Exp {
 		return jwtClaims{}, errors.New("jwt expired or unauthorized")
 	}
 	return claims, nil

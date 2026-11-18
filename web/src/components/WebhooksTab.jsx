@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
 import { Webhook, Plus, Trash2, Send, Eye, EyeOff } from 'lucide-react'
 import { api } from '../api'
+import { useI18n } from '../i18n'
 
 export default function WebhooksTab({ project, environments }) {
+  const { t } = useI18n()
   const [webhooks, setWebhooks] = useState([])
   const [type, setType] = useState('discord')
   const [targetURL, setTargetURL] = useState('')
   const [secretKey, setSecretKey] = useState('')
   const [envID, setEnvID] = useState('')
-  const [events, setEvents] = useState('*')
   const [revealedSecrets, setRevealedSecrets] = useState({})
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
@@ -37,7 +38,7 @@ export default function WebhooksTab({ project, environments }) {
         target_url: targetURL.trim(),
         secret_key: secretKey.trim(),
         env_id: envID || null,
-        events: events.trim() || '*',
+        events: '*',
       })
       setTargetURL('')
       setSecretKey('')
@@ -52,9 +53,9 @@ export default function WebhooksTab({ project, environments }) {
     setNotice('')
     try {
       await api.testWebhook(project.id, id)
-      setNotice('Test webhook event delivered successfully.')
+      setNotice(t('testSent'))
     } catch (err) {
-      setError(`Test failed: ${err.message}`)
+      setError(`${t('testFailed')}: ${err.message}`)
     }
   }
 
@@ -73,11 +74,9 @@ export default function WebhooksTab({ project, environments }) {
     <div className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold text-white">
-          Webhooks — <span className="text-emerald-400">{project.name}</span>
+          {t('tabWebhooks')} — <span className="text-emerald-400">{project.name}</span>
         </h2>
-        <p className="text-xs text-slate-400">
-          Receive secret rotation &amp; D-7/D-1 expiration alerts. Plaintext secret values are never included in payloads.
-        </p>
+        <p className="text-xs text-slate-400">{t('webhooksDesc')}</p>
       </div>
 
       {error && (
@@ -117,7 +116,7 @@ export default function WebhooksTab({ project, environments }) {
           type="text"
           value={secretKey}
           onChange={(e) => setSecretKey(e.target.value)}
-          placeholder="HMAC secret key (for custom)"
+          placeholder={t('webhookSecretPlaceholder')}
           className="md:col-span-2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-mono text-slate-100 placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
         />
         <select
@@ -125,7 +124,7 @@ export default function WebhooksTab({ project, environments }) {
           onChange={(e) => setEnvID(e.target.value)}
           className="md:col-span-2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none"
         >
-          <option value="">All environments</option>
+          <option value="">{t('allEnvironments')}</option>
           {(environments || []).map((env) => (
             <option key={env.id} value={env.id}>
               {env.name}
@@ -136,26 +135,26 @@ export default function WebhooksTab({ project, environments }) {
           type="submit"
           className="md:col-span-2 inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-2 text-sm font-medium text-white cursor-pointer"
         >
-          <Plus className="h-4 w-4" /> Add
+          <Plus className="h-4 w-4" /> {t('addWebhook')}
         </button>
       </form>
 
-      <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/40">
-        <table className="w-full text-left text-sm">
+      <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/40">
+        <table className="w-full min-w-[560px] text-left text-sm">
           <thead className="border-b border-slate-800 bg-slate-900/80 text-xs uppercase text-slate-400">
             <tr>
-              <th className="px-4 py-3">Type</th>
-              <th className="px-4 py-3">Target</th>
-              <th className="px-4 py-3">Env</th>
-              <th className="px-4 py-3">HMAC Secret Key</th>
-              <th className="px-4 py-3 text-right">Actions</th>
+              <th className="px-4 py-3">{t('colType')}</th>
+              <th className="px-4 py-3">{t('colTarget')}</th>
+              <th className="px-4 py-3">{t('colEnv')}</th>
+              <th className="px-4 py-3">{t('colHmacSecret')}</th>
+              <th className="px-4 py-3 text-right">{t('colActions')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/70">
             {webhooks.length === 0 ? (
               <tr>
                 <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
-                  No webhooks registered.
+                  {t('noWebhooks')}
                 </td>
               </tr>
             ) : (
@@ -172,7 +171,7 @@ export default function WebhooksTab({ project, environments }) {
                       {wh.target_url}
                     </td>
                     <td className="px-4 py-3 text-slate-300">
-                      {wh.env_id ? envMap[wh.env_id] || wh.env_id : 'All'}
+                      {wh.env_id ? envMap[wh.env_id] || wh.env_id : t('allEnvironments')}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-slate-400">
                       {wh.secret_key ? (
@@ -197,7 +196,7 @@ export default function WebhooksTab({ project, environments }) {
                           onClick={() => handleTest(wh.id)}
                           className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-500/15 cursor-pointer"
                         >
-                          <Send className="h-3.5 w-3.5" /> Test
+                          <Send className="h-3.5 w-3.5" /> {t('testBtn')}
                         </button>
                         <button
                           onClick={() => handleDelete(wh.id)}

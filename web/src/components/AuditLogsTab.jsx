@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { RefreshCw, CheckCircle2, XCircle } from 'lucide-react'
 import { api } from '../api'
+import { useI18n } from '../i18n'
 
 export default function AuditLogsTab() {
+  const { t } = useI18n()
   const [logs, setLogs] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -28,16 +30,14 @@ export default function AuditLogsTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-white">Audit Logs</h2>
-          <p className="text-xs text-slate-400">
-            Authentication attempts (success/failure IPs) and secret view/change history.
-          </p>
+          <h2 className="text-lg font-semibold text-white">{t('tabAudit')}</h2>
+          <p className="text-xs text-slate-400">{t('auditDesc')}</p>
         </div>
         <button
           onClick={loadLogs}
           className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 px-3 py-1.5 text-xs text-slate-200 cursor-pointer"
         >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> {t('refresh')}
         </button>
       </div>
 
@@ -47,23 +47,23 @@ export default function AuditLogsTab() {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/40">
-        <table className="w-full text-left text-sm">
+      <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/40">
+        <table className="w-full min-w-[600px] text-left text-sm">
           <thead className="border-b border-slate-800 bg-slate-900/80 text-xs uppercase text-slate-400">
             <tr>
-              <th className="px-4 py-3">Time</th>
-              <th className="px-4 py-3">Event</th>
-              <th className="px-4 py-3">Actor</th>
-              <th className="px-4 py-3">IP Address</th>
-              <th className="px-4 py-3">Target / Detail</th>
-              <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">{t('colTime')}</th>
+              <th className="px-4 py-3">{t('colEvent')}</th>
+              <th className="px-4 py-3">{t('colActor')}</th>
+              <th className="px-4 py-3">{t('colIP')}</th>
+              <th className="px-4 py-3">{t('colTargetDetail')}</th>
+              <th className="px-4 py-3">{t('colStatus')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/70">
             {logs.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
-                  No audit events recorded yet.
+                  {t('noAuditLogs')}
                 </td>
               </tr>
             ) : (

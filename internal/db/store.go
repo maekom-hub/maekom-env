@@ -792,3 +792,48 @@ func (d *DB) ListAuditLogs(ctx context.Context, limit int) ([]AuditLog, error) {
 	}
 	return out, rows.Err()
 }
+
+// GetAdminTOTP fetches the singleton admin TOTP configuration.
+func (d *DB) GetAdminTOTP(ctx context.Context) (AdminTOTP, error) {
+	var (
+		totp    AdminTOTP
+		enabled int
+	)
+	err := d.sqlDB.QueryRowContext(
+		ctx,
+		`SELECT encrypted_secret, nonce, enabled, updated_at FROM admin_totp WHERE id = 1`,
+	).Scan(&totp.EncryptedSecret, &totp.Nonce, &enabled, &totp.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AdminTOTP{}, ErrNotFound
+	}
+	if err != nil {
+		return AdminTOTP{}, fmt.Errorf("db: get admin totp: %w", err)
+	}
+	totp.Enabled = enabled != 0
+	return totp, nil
+}
+
+// UpsertAdminTOTP stores or replaces the encrypted admin TOTP secret.
+func (d *DB) UpsertAdminTOTP(ctx context.Context, encryptedSecret, nonce []byte, enabled bool) error {
+	now := time.Now().UTC()
+	enabledInt := 0
+	if enabled {
+		enabledInt = 1
+	}
+
+	_, err := d.sqlDB.ExecContext(
+		ctx,
+		`INSERT INTO admin_totp (id, encrypted_secret, nonce, enabled, updated_at)
+		 VALUES (1, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET
+			encrypted_secret = excluded.encrypted_secret,
+			nonce = excluded.nonce,
+			enabled = excluded.enabled,
+			updated_at = excluded.updated_at`,
+		encryptedSecret, nonce, enabledInt, now,
+	)
+	if err != nil {
+		return fmt.Errorf("db: upsert admin totp: %w", err)
+	}
+	return nil
+}

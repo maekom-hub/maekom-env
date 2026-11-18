@@ -99,6 +99,19 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DE
 CREATE INDEX IF NOT EXISTS idx_audit_logs_project_id ON audit_logs(project_id);
 `,
 	},
+	{
+		version: 3,
+		name:    "admin_totp",
+		sql: `
+CREATE TABLE IF NOT EXISTS admin_totp (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	encrypted_secret BLOB NOT NULL,
+	nonce BLOB NOT NULL,
+	enabled INTEGER NOT NULL DEFAULT 0,
+	updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`,
+	},
 }
 
 // Migrate applies any pending schema migrations inside transactions.

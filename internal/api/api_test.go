@@ -92,16 +92,33 @@ func TestEndToEndAPIAuthSecretsTokensAndWebhooks(t *testing.T) {
 	if loginRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for login, got %d: %s", loginRec.Code, loginRec.Body.String())
 	}
+	var setupResp struct {
+		Status    string `json:"status"`
+		TempToken string `json:"temp_token"`
+		Secret    string `json:"secret"`
+	}
+	_ = json.Unmarshal(loginRec.Body.Bytes(), &setupResp)
+	if setupResp.Status != "totp_setup_required" || setupResp.TempToken == "" {
+		t.Fatalf("expected totp_setup_required, got %s", loginRec.Body.String())
+	}
+
+	totpRec := doReq(t, handler, http.MethodPost, "/api/auth/totp/setup", "", nil, map[string]string{
+		"temp_token": setupResp.TempToken,
+		"totp_code":  codeForSecret(t, setupResp.Secret),
+	}, "")
+	if totpRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for totp setup, got %d: %s", totpRec.Code, totpRec.Body.String())
+	}
 	var loginResp struct {
 		Token string `json:"token"`
 	}
-	_ = json.Unmarshal(loginRec.Body.Bytes(), &loginResp)
+	_ = json.Unmarshal(totpRec.Body.Bytes(), &loginResp)
 	if loginResp.Token == "" {
-		t.Fatal("expected JWT token from login")
+		t.Fatal("expected JWT token from totp setup")
 	}
 
 	var sessionCookie *http.Cookie
-	for _, c := range loginRec.Result().Cookies() {
+	for _, c := range totpRec.Result().Cookies() {
 		if c.Name == sessionCookieName {
 			sessionCookie = c
 		}
