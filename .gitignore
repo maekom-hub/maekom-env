@@ -1,0 +1,8 @@
+*.db
+*.db-wal
+*.db-shm
+.env
+dist/
+bin/
+maekom-server
+mkv
