@@ -1,19 +1,21 @@
-# Stage 1: Build Vite + React + Tailwind web dashboard
-FROM node:22-alpine AS web-builder
+# Stage 1: Build Vite + React + Tailwind web dashboard natively on host
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web-builder
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json* ./
 RUN npm ci || npm install
 COPY web/ ./
 RUN npm run build
 
-# Stage 2: Build static Go binary with embedded web/dist
-FROM golang:1.26-alpine AS go-builder
+# Stage 2: Cross-compile static Go binary with embedded web/dist natively on host
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS go-builder
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web-builder /app/web/dist ./web/dist
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/maekom-server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/maekom-server ./cmd/server
 
 # Stage 3: Minimal non-root runtime image
 FROM alpine:3.20
