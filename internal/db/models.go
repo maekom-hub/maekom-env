@@ -51,14 +51,29 @@ type Secret struct {
 
 // ServiceToken represents a hashed API/CLI service token scoped to a project (and optionally an environment).
 type ServiceToken struct {
-	ID        string     `json:"id"`
-	ProjectID string     `json:"project_id"`
-	EnvID     *string    `json:"env_id,omitempty"`
-	Name      string     `json:"name"`
-	TokenHash string     `json:"-"`
-	Scope     TokenScope `json:"scope"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
+	ID         string     `json:"id"`
+	ProjectID  string     `json:"project_id"`
+	EnvID      *string    `json:"env_id,omitempty"`
+	Name       string     `json:"name"`
+	TokenHash  string     `json:"-"`
+	Scope      TokenScope `json:"scope"`
+	AllowedIPs string     `json:"allowed_ips"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// AuditLog records authentication attempts and secret access/mutation events.
+type AuditLog struct {
+	ID        string    `json:"id"`
+	Event     string    `json:"event"`
+	Actor     string    `json:"actor"`
+	IPAddress string    `json:"ip_address"`
+	ProjectID *string   `json:"project_id,omitempty"`
+	EnvID     *string   `json:"env_id,omitempty"`
+	TargetKey string    `json:"target_key,omitempty"`
+	Success   bool      `json:"success"`
+	Detail    string    `json:"detail,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Webhook represents an outbound notification endpoint for secret lifecycle events.

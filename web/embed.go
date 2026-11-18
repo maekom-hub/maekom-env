@@ -1,8 +1,14 @@
 package web
 
-import "embed"
+import (
+	"embed"
+	"io/fs"
+)
 
-// Assets holds the embedded web UI static files.
-//
-//go:embed index.html
-var Assets embed.FS
+//go:embed all:dist
+var assets embed.FS
+
+// DistFS returns the embedded production web UI filesystem rooted at dist/.
+func DistFS() (fs.FS, error) {
+	return fs.Sub(assets, "dist")
+}

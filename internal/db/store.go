@@ -423,6 +423,7 @@ func (d *DB) CreateServiceToken(
 	envID *string,
 	name, tokenHash string,
 	scope TokenScope,
+	allowedIPs string,
 	expiresAt *time.Time,
 ) (ServiceToken, error) {
 	id, err := NewID()
@@ -443,23 +444,24 @@ func (d *DB) CreateServiceToken(
 
 	_, err = d.sqlDB.ExecContext(
 		ctx,
-		`INSERT INTO service_tokens (id, project_id, env_id, name, token_hash, scope, expires_at, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, projectID, envVal, name, tokenHash, string(scope), expVal, now,
+		`INSERT INTO service_tokens (id, project_id, env_id, name, token_hash, scope, allowed_ips, expires_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, projectID, envVal, name, tokenHash, string(scope), allowedIPs, expVal, now,
 	)
 	if err != nil {
 		return ServiceToken{}, mapConstraintErr(err)
 	}
 
 	return ServiceToken{
-		ID:        id,
-		ProjectID: projectID,
-		EnvID:     envID,
-		Name:      name,
-		TokenHash: tokenHash,
-		Scope:     scope,
-		ExpiresAt: expiresAt,
-		CreatedAt: now,
+		ID:         id,
+		ProjectID:  projectID,
+		EnvID:      envID,
+		Name:       name,
+		TokenHash:  tokenHash,
+		Scope:      scope,
+		AllowedIPs: allowedIPs,
+		ExpiresAt:  expiresAt,
+		CreatedAt:  now,
 	}, nil
 }
 
@@ -473,10 +475,10 @@ func (d *DB) GetServiceTokenByHash(ctx context.Context, tokenHash string) (Servi
 	)
 	err := d.sqlDB.QueryRowContext(
 		ctx,
-		`SELECT id, project_id, env_id, name, token_hash, scope, expires_at, created_at
+		`SELECT id, project_id, env_id, name, token_hash, scope, allowed_ips, expires_at, created_at
 		 FROM service_tokens WHERE token_hash = ?`,
 		tokenHash,
-	).Scan(&tok.ID, &tok.ProjectID, &envID, &tok.Name, &tok.TokenHash, &scope, &exp, &tok.CreatedAt)
+	).Scan(&tok.ID, &tok.ProjectID, &envID, &tok.Name, &tok.TokenHash, &scope, &tok.AllowedIPs, &exp, &tok.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ServiceToken{}, ErrNotFound
 	}
@@ -499,7 +501,7 @@ func (d *DB) GetServiceTokenByHash(ctx context.Context, tokenHash string) (Servi
 func (d *DB) ListServiceTokens(ctx context.Context, projectID string) ([]ServiceToken, error) {
 	rows, err := d.sqlDB.QueryContext(
 		ctx,
-		`SELECT id, project_id, env_id, name, token_hash, scope, expires_at, created_at
+		`SELECT id, project_id, env_id, name, token_hash, scope, allowed_ips, expires_at, created_at
 		 FROM service_tokens WHERE project_id = ? ORDER BY created_at DESC`,
 		projectID,
 	)
@@ -516,7 +518,7 @@ func (d *DB) ListServiceTokens(ctx context.Context, projectID string) ([]Service
 			exp   sql.NullTime
 			scope string
 		)
-		if err := rows.Scan(&tok.ID, &tok.ProjectID, &envID, &tok.Name, &tok.TokenHash, &scope, &exp, &tok.CreatedAt); err != nil {
+		if err := rows.Scan(&tok.ID, &tok.ProjectID, &envID, &tok.Name, &tok.TokenHash, &scope, &tok.AllowedIPs, &exp, &tok.CreatedAt); err != nil {
 			return nil, fmt.Errorf("db: scan service token: %w", err)
 		}
 		if envID.Valid {
@@ -712,4 +714,81 @@ func mapConstraintErr(err error) error {
 		return fmt.Errorf("%w: %v", ErrNotFound, err)
 	}
 	return err
+}
+
+// InsertAuditLog records an authentication or secret access/mutation event.
+func (d *DB) InsertAuditLog(ctx context.Context, entry AuditLog) error {
+	id, err := NewID()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+
+	var projVal, envVal any
+	if entry.ProjectID != nil && *entry.ProjectID != "" {
+		projVal = *entry.ProjectID
+	}
+	if entry.EnvID != nil && *entry.EnvID != "" {
+		envVal = *entry.EnvID
+	}
+	successInt := 0
+	if entry.Success {
+		successInt = 1
+	}
+
+	_, err = d.sqlDB.ExecContext(
+		ctx,
+		`INSERT INTO audit_logs (id, event, actor, ip_address, project_id, env_id, target_key, success, detail, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, entry.Event, entry.Actor, entry.IPAddress, projVal, envVal, entry.TargetKey, successInt, entry.Detail, now,
+	)
+	if err != nil {
+		return fmt.Errorf("db: insert audit log: %w", err)
+	}
+	return nil
+}
+
+// ListAuditLogs returns recent audit log entries ordered newest first.
+func (d *DB) ListAuditLogs(ctx context.Context, limit int) ([]AuditLog, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+
+	rows, err := d.sqlDB.QueryContext(
+		ctx,
+		`SELECT id, event, actor, ip_address, project_id, env_id, target_key, success, detail, created_at
+		 FROM audit_logs ORDER BY created_at DESC LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("db: list audit logs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []AuditLog
+	for rows.Next() {
+		var (
+			item    AuditLog
+			projID  sql.NullString
+			envID   sql.NullString
+			success int
+		)
+		if err := rows.Scan(
+			&item.ID, &item.Event, &item.Actor, &item.IPAddress,
+			&projID, &envID, &item.TargetKey, &success, &item.Detail, &item.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("db: scan audit log: %w", err)
+		}
+		if projID.Valid {
+			v := projID.String
+			item.ProjectID = &v
+		}
+		if envID.Valid {
+			v := envID.String
+			item.EnvID = &v
+		}
+		item.Success = success != 0
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }

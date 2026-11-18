@@ -93,6 +93,55 @@ func (s *Server) handleListSecrets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"secrets": resp})
 }
 
+func (s *Server) handleRevealSecret(w http.ResponseWriter, r *http.Request) {
+	proj, env, ok := s.authorizeEnvAccess(w, r, false)
+	if !ok {
+		return
+	}
+
+	key := strings.TrimSpace(r.PathValue("key"))
+	if key == "" {
+		writeError(w, http.StatusBadRequest, "secret key is required")
+		return
+	}
+
+	sec, err := s.db.GetSecretByKey(r.Context(), env.ID, key)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+
+	plaintext, err := s.cipher.DecryptString(sec.EncryptedValue, sec.Nonce)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to decrypt secret")
+		return
+	}
+
+	principal, _ := PrincipalFromContext(r.Context())
+	s.recordAudit(r.Context(), db.AuditLog{
+		Event:     "secret.viewed",
+		Actor:     principal.ActorName(),
+		IPAddress: clientIP(r),
+		ProjectID: &proj.ID,
+		EnvID:     &env.ID,
+		TargetKey: sec.Key,
+		Success:   true,
+		Detail:    proj.Name + "/" + env.Name,
+	})
+
+	writeJSON(w, http.StatusOK, secretResponse{
+		ID:         sec.ID,
+		EnvID:      sec.EnvID,
+		Key:        sec.Key,
+		Value:      plaintext,
+		Masked:     false,
+		ExpiresAt:  sec.ExpiresAt,
+		Notified7d: sec.Notified7d,
+		Notified1d: sec.Notified1d,
+		UpdatedAt:  sec.UpdatedAt,
+	})
+}
+
 func (s *Server) handleUpsertSecret(w http.ResponseWriter, r *http.Request) {
 	proj, env, ok := s.authorizeEnvAccess(w, r, true)
 	if !ok {
@@ -161,6 +210,18 @@ func (s *Server) upsertAndRespond(
 		s.notifier.NotifySecretUpdatedAsync(proj.ID, proj.Name, env.ID, env.Name, sec.Key)
 	}
 
+	principal, _ := PrincipalFromContext(r.Context())
+	s.recordAudit(r.Context(), db.AuditLog{
+		Event:     "secret.updated",
+		Actor:     principal.ActorName(),
+		IPAddress: clientIP(r),
+		ProjectID: &proj.ID,
+		EnvID:     &env.ID,
+		TargetKey: sec.Key,
+		Success:   true,
+		Detail:    proj.Name + "/" + env.Name,
+	})
+
 	writeJSON(w, http.StatusOK, secretResponse{
 		ID:         sec.ID,
 		EnvID:      sec.EnvID,
@@ -194,6 +255,18 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	if s.notifier != nil {
 		s.notifier.NotifySecretUpdatedAsync(proj.ID, proj.Name, env.ID, env.Name, key)
 	}
+
+	principal, _ := PrincipalFromContext(r.Context())
+	s.recordAudit(r.Context(), db.AuditLog{
+		Event:     "secret.deleted",
+		Actor:     principal.ActorName(),
+		IPAddress: clientIP(r),
+		ProjectID: &proj.ID,
+		EnvID:     &env.ID,
+		TargetKey: key,
+		Success:   true,
+		Detail:    proj.Name + "/" + env.Name,
+	})
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -247,6 +320,18 @@ func (s *Server) handleImportSecrets(w http.ResponseWriter, r *http.Request) {
 			s.notifier.NotifySecretUpdatedAsync(proj.ID, proj.Name, env.ID, env.Name, entry.Key)
 		}
 	}
+
+	principal, _ := PrincipalFromContext(r.Context())
+	s.recordAudit(r.Context(), db.AuditLog{
+		Event:     "secret.imported",
+		Actor:     principal.ActorName(),
+		IPAddress: clientIP(r),
+		ProjectID: &proj.ID,
+		EnvID:     &env.ID,
+		TargetKey: fmt.Sprintf("%d keys", len(importedKeys)),
+		Success:   true,
+		Detail:    proj.Name + "/" + env.Name,
+	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"imported": len(importedKeys),

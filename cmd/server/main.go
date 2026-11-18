@@ -14,6 +14,7 @@ import (
 	"github.com/maekom-hub/maekom-env/internal/crypto"
 	"github.com/maekom-hub/maekom-env/internal/db"
 	"github.com/maekom-hub/maekom-env/internal/notifier"
+	"github.com/maekom-hub/maekom-env/web"
 )
 
 func main() {
@@ -52,6 +53,11 @@ func main() {
 	if apiCfg.AdminPassword == "" {
 		log.Println("warning: ADMIN_PASSWORD is not set; admin login is disabled")
 	}
+	webFS, err := web.DistFS()
+	if err != nil {
+		log.Fatalf("failed to load embedded web UI: %v", err)
+	}
+	apiCfg.WebFS = webFS
 
 	apiServer, err := api.NewServer(store, cipher, disp, apiCfg)
 	if err != nil {

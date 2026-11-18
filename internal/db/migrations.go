@@ -76,6 +76,29 @@ CREATE TABLE IF NOT EXISTS webhooks (
 CREATE INDEX IF NOT EXISTS idx_webhooks_project_id ON webhooks(project_id);
 `,
 	},
+	{
+		version: 2,
+		name:    "audit_logs_and_token_ip_restriction",
+		sql: `
+ALTER TABLE service_tokens ADD COLUMN allowed_ips TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+	id TEXT PRIMARY KEY,
+	event TEXT NOT NULL,
+	actor TEXT NOT NULL,
+	ip_address TEXT NOT NULL DEFAULT '',
+	project_id TEXT,
+	env_id TEXT,
+	target_key TEXT NOT NULL DEFAULT '',
+	success INTEGER NOT NULL DEFAULT 1,
+	detail TEXT NOT NULL DEFAULT '',
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_project_id ON audit_logs(project_id);
+`,
+	},
 }
 
 // Migrate applies any pending schema migrations inside transactions.

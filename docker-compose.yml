@@ -1,0 +1,27 @@
+services:
+  maekom-env:
+    build: .
+    image: ghcr.io/maekom-hub/maekom-env:latest
+    container_name: maekom-env
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      # Required: 32-byte raw string or 64-character hex string (NEVER stored in DB)
+      MASTER_KEY: "${MASTER_KEY:?MASTER_KEY is required}"
+      # Required for Web Dashboard login
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}"
+      # Optional: Base32 TOTP secret for 2FA
+      TOTP_SECRET: "${TOTP_SECRET:-}"
+      # Optional: Idle session timeout (default 30m)
+      SESSION_TIMEOUT: "${SESSION_TIMEOUT:-30m}"
+      MAEKOM_DB_PATH: "/data/maekom.db"
+      MAEKOM_ADDR: ":8080"
+      # Optional: SMTP settings for email webhooks
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASS: "${SMTP_PASS:-}"
+      SMTP_FROM: "${SMTP_FROM:-}"

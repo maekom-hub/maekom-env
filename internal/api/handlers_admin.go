@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,13 +14,14 @@ import (
 )
 
 type serviceTokenView struct {
-	ID        string        `json:"id"`
-	ProjectID string        `json:"project_id"`
-	EnvID     *string       `json:"env_id,omitempty"`
-	Name      string        `json:"name"`
-	Scope     db.TokenScope `json:"scope"`
-	ExpiresAt *time.Time    `json:"expires_at,omitempty"`
-	CreatedAt time.Time     `json:"created_at"`
+	ID         string        `json:"id"`
+	ProjectID  string        `json:"project_id"`
+	EnvID      *string       `json:"env_id,omitempty"`
+	Name       string        `json:"name"`
+	Scope      db.TokenScope `json:"scope"`
+	AllowedIPs string        `json:"allowed_ips"`
+	ExpiresAt  *time.Time    `json:"expires_at,omitempty"`
+	CreatedAt  time.Time     `json:"created_at"`
 }
 
 type webhookView struct {
@@ -28,6 +30,7 @@ type webhookView struct {
 	EnvID     *string        `json:"env_id,omitempty"`
 	Type      db.WebhookType `json:"type"`
 	TargetURL string         `json:"target_url"`
+	SecretKey string         `json:"secret_key,omitempty"`
 	HasSecret bool           `json:"has_secret"`
 	Events    string         `json:"events"`
 	Enabled   bool           `json:"enabled"`
@@ -49,13 +52,14 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 	views := make([]serviceTokenView, 0, len(tokens))
 	for _, tok := range tokens {
 		views = append(views, serviceTokenView{
-			ID:        tok.ID,
-			ProjectID: tok.ProjectID,
-			EnvID:     tok.EnvID,
-			Name:      tok.Name,
-			Scope:     tok.Scope,
-			ExpiresAt: tok.ExpiresAt,
-			CreatedAt: tok.CreatedAt,
+			ID:         tok.ID,
+			ProjectID:  tok.ProjectID,
+			EnvID:      tok.EnvID,
+			Name:       tok.Name,
+			Scope:      tok.Scope,
+			AllowedIPs: tok.AllowedIPs,
+			ExpiresAt:  tok.ExpiresAt,
+			CreatedAt:  tok.CreatedAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tokens": views})
@@ -69,10 +73,11 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		EnvID     *string       `json:"env_id"`
-		Name      string        `json:"name"`
-		Scope     db.TokenScope `json:"scope"`
-		ExpiresAt *time.Time    `json:"expires_at"`
+		EnvID      *string       `json:"env_id"`
+		Name       string        `json:"name"`
+		Scope      db.TokenScope `json:"scope"`
+		AllowedIPs string        `json:"allowed_ips"`
+		ExpiresAt  *time.Time    `json:"expires_at"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -104,7 +109,16 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	}
 	tokenHash := crypto.HashToken(rawToken)
 
-	tok, err := s.db.CreateServiceToken(r.Context(), projectID, req.EnvID, req.Name, tokenHash, req.Scope, req.ExpiresAt)
+	tok, err := s.db.CreateServiceToken(
+		r.Context(),
+		projectID,
+		req.EnvID,
+		req.Name,
+		tokenHash,
+		req.Scope,
+		strings.TrimSpace(req.AllowedIPs),
+		req.ExpiresAt,
+	)
 	if err != nil {
 		writeDBError(w, err)
 		return
@@ -113,13 +127,14 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"token": rawToken,
 		"metadata": serviceTokenView{
-			ID:        tok.ID,
-			ProjectID: tok.ProjectID,
-			EnvID:     tok.EnvID,
-			Name:      tok.Name,
-			Scope:     tok.Scope,
-			ExpiresAt: tok.ExpiresAt,
-			CreatedAt: tok.CreatedAt,
+			ID:         tok.ID,
+			ProjectID:  tok.ProjectID,
+			EnvID:      tok.EnvID,
+			Name:       tok.Name,
+			Scope:      tok.Scope,
+			AllowedIPs: tok.AllowedIPs,
+			ExpiresAt:  tok.ExpiresAt,
+			CreatedAt:  tok.CreatedAt,
 		},
 	})
 }
@@ -155,6 +170,7 @@ func (s *Server) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
 			EnvID:     wh.EnvID,
 			Type:      wh.Type,
 			TargetURL: wh.TargetURL,
+			SecretKey: wh.SecretKey,
 			HasSecret: wh.SecretKey != "",
 			Events:    wh.Events,
 			Enabled:   wh.Enabled,
@@ -231,6 +247,7 @@ func (s *Server) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 		EnvID:     wh.EnvID,
 		Type:      wh.Type,
 		TargetURL: wh.TargetURL,
+		SecretKey: wh.SecretKey,
 		HasSecret: wh.SecretKey != "",
 		Events:    wh.Events,
 		Enabled:   wh.Enabled,
@@ -296,4 +313,23 @@ func generateServiceToken() (string, error) {
 		return "", err
 	}
 	return serviceTokenPrefix + hex.EncodeToString(b[:]), nil
+}
+
+func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	logs, err := s.db.ListAuditLogs(r.Context(), limit)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if logs == nil {
+		logs = []db.AuditLog{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"audit_logs": logs})
 }
